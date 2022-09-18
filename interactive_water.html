@@ -1,0 +1,178 @@
+<html>
+	<head>
+		<title>Interactive grass prototype</title>
+		<style>
+			body { margin: 0; }
+			canvas { width: 100%; height: 100% }
+		</style>
+	</head>
+	<body>
+		<script src="three.js"></script>
+		<script>
+			var WATER_SIMULATION_TICK_TIME_MS = 50;
+			var WATER_GRID_VISCOSITY = 0.7;
+			var WATER_GRID_SPEED_COEF = 0.5;
+			var CURSOR_RADIUS = 0.2;
+			var WATER_GRID_SIZE = 12.0;
+			var WATER_GRID_RESOLUTION = 40;
+			var WATER_GRID_ELEMENT_SPACING = WATER_GRID_SIZE / WATER_GRID_RESOLUTION;
+			var WATER_GRID_NUM_ELEMENTS = WATER_GRID_RESOLUTION * WATER_GRID_RESOLUTION;
+		
+			var scene = new THREE.Scene();
+			var camera = new THREE.PerspectiveCamera( 75, window.innerWidth/window.innerHeight, 0.1, 1000 );
+
+			var renderer = new THREE.WebGLRenderer();
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			document.body.appendChild( renderer.domElement );
+			
+			function fract(x)
+			{
+				return x - Math.floor(x);
+			}
+			
+			class WaterGrid
+			{
+				constructor(resolution, scene)
+				{
+					this.height = new Float32Array(WATER_GRID_NUM_ELEMENTS);
+					this.velocity = new Float32Array(WATER_GRID_NUM_ELEMENTS);
+					this.height_next = new Float32Array(WATER_GRID_NUM_ELEMENTS);
+					
+					this.meshes = new Array();
+					
+					var i = 0;
+					for(var y=0; y<resolution; ++y)
+					{
+						for(var x=0; x<resolution; ++x, ++i)
+						{
+							this.height[i] = this.height_next[i] = 0.0;
+							this.velocity[i] = 0.0;
+							
+							const ma = new THREE.MeshBasicMaterial( {color: 0x0000ff} );
+							
+							const mesh = new THREE.Mesh( new THREE.BoxGeometry( WATER_GRID_ELEMENT_SPACING*0.9, 0.01, WATER_GRID_ELEMENT_SPACING*0.9 ), ma );
+							mesh.position.x = x * WATER_GRID_ELEMENT_SPACING;
+							mesh.position.y = 0;
+							mesh.position.z = y * WATER_GRID_ELEMENT_SPACING;
+							mesh.material = ma;
+
+							this.meshes.push(mesh);
+							scene.add( mesh );
+						}
+					}
+				}
+				simulation()
+				{
+					for(var y=1; y<WATER_GRID_RESOLUTION-1; ++y)
+					{
+						for(var x=1; x<WATER_GRID_RESOLUTION-1; ++x)
+						{
+							var i = x + y * WATER_GRID_RESOLUTION;
+							this.height[i] += this.velocity[i];
+							
+							var avg = (this.height[i-1] + this.height[i+1] + this.height[i-WATER_GRID_RESOLUTION] + this.height[i+WATER_GRID_RESOLUTION]) * 0.25;
+							this.velocity[i] += (avg - this.height[i]) * WATER_GRID_SPEED_COEF;
+							this.velocity[i] *= WATER_GRID_VISCOSITY;
+							
+							this.height_next[i] = this.height[i] + this.velocity[i];
+						}
+					}
+					
+					for(var i=0; i<WATER_GRID_NUM_ELEMENTS; ++i)
+					{
+						this.height[i] = this.height_next[i];
+						this.meshes[i].position.y = this.height[i]*8.0;
+						this.meshes[i].material.color.g = fract((this.height[i])*16);
+					}
+				}
+				interact(x,y, power)
+				{
+					if(x<0.0 || y<0.0 || x>WATER_GRID_SIZE || y>WATER_GRID_SIZE) return;
+					
+					var xi = Math.floor(x / WATER_GRID_ELEMENT_SPACING);
+					var yi = Math.floor(y / WATER_GRID_ELEMENT_SPACING);
+					
+					if(xi != this.last_xi || yi != this.last_yi)
+					{
+						this.height[xi + yi*WATER_GRID_RESOLUTION] = power;
+						this.last_xi = xi;
+						this.last_yi = yi;
+					}
+				}
+			}
+		
+			camera.position.z = 13.0;
+			camera.position.y = 4.0;
+			camera.position.x = 6.0;
+			camera.rotation.x = -0.8;
+			
+			var water_grid = new WaterGrid(WATER_GRID_RESOLUTION, scene);
+			
+			var cursor = new THREE.Mesh( new THREE.CylinderGeometry(CURSOR_RADIUS, CURSOR_RADIUS, 1.0, 18.0), new THREE.MeshBasicMaterial());
+			scene.add(cursor);
+			
+			cursor.setPosition = function(x,z)
+			{
+				this.velocity = new THREE.Vector2(x - this.position.x, z - this.position.z);
+				this.position.x = x;
+				this.position.z = z;
+			};
+			
+			var mouse2d = new THREE.Vector3(0.0, 0.0, -1.0);
+			document.addEventListener('mousemove', onMouseMove, false);
+			
+			function onMouseMove(event)
+			{
+				mouse2d.x = event.clientX / window.innerWidth * 2.0 - 1.0;
+				mouse2d.y = 1.0 - event.clientY / window.innerHeight * 2.0;
+			}
+			
+			var mouseDown = false;
+			
+			document.addEventListener('mousedown', onMouseDown, false);
+			document.addEventListener('mouseup', onMouseUp, false);
+			
+			function onMouseDown(event)
+			{
+				mouseDown = true;
+			}
+			function onMouseUp(event)
+			{
+				mouseDown = false;
+			}
+			
+			var date = new Date();
+			var lastTime = date.getTime();
+
+			var animate = function ()
+			{
+				renderer.render( scene, camera );
+				
+				var mouse3d = mouse2d.clone().unproject( camera );
+				var ray_dir = mouse3d.clone().sub( camera.position );
+				
+				var now = Date.now();
+				if(now - lastTime > WATER_SIMULATION_TICK_TIME_MS)
+				{
+					lastTime = now;
+					water_grid.simulation();
+				}
+			
+				if( ray_dir.y < 0.001 )
+				{
+					var ray_hit = new THREE.Vector3();
+					var coef = (camera.position.y / -ray_dir.y);
+				
+					ray_dir.multiplyScalar( coef );
+					var ray_hit = ray_dir.clone().add(camera.position);
+					cursor.setPosition(ray_hit.x, ray_hit.z);
+					
+					water_grid.interact(ray_hit.x, ray_hit.z, mouseDown ? -2.0 : -0.2);
+				}
+				requestAnimationFrame( animate );
+			};
+
+			animate();
+		</script>
+	</body>
+</html>
