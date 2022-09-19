@@ -82,7 +82,15 @@
 					{
 						this.height[i] = this.height_next[i];
 						this.meshes[i].position.y = this.height[i]*8.0;
-						this.meshes[i].material.color.g = fract((this.height[i])*16);
+						
+						var delta = 0.0;
+						if(i+1 < WATER_GRID_NUM_ELEMENTS) delta = this.height[i] - this.height[i+1];
+						
+						this.meshes[i].material.color.g = Math.min(Math.max(delta*8+0.5, 0.0), 1.0);
+						
+						delta = 0.0;
+						if(i+WATER_GRID_RESOLUTION < WATER_GRID_NUM_ELEMENTS) delta = this.height[i] - this.height[i+WATER_GRID_RESOLUTION];
+						this.meshes[i].material.color.b = Math.min(Math.max(delta*8+0.5, 0.0), 1.0);						
 					}
 				}
 				interact(x,y, power)
